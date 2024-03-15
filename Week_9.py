@@ -190,20 +190,22 @@ class RaspberryPi:
                     # Small object direction detection
                     self.small_direction = self.snap_and_rec("Small")
                     self.logger.info(f"HERE small direction is: {self.small_direction}")
+                    self.command_queue.put("DT20") 
                     if self.small_direction == "Left Arrow": 
-                        self.command_queue.put("OB01") # ack_count = 3
-                        self.command_queue.put("UL00") # ack_count = 5
+                        self.command_queue.put("FL00") # ack_count = 3
+                        self.command_queue.put("FR00") # ack_count = 5
+                        # TODO:fix this shit
                     elif self.small_direction == "Right Arrow":
-                        self.command_queue.put("OB01") # ack_count = 3
-                        self.command_queue.put("UR00") # ack_count = 5
+                        self.command_queue.put("FR00") # ack_count = 5
+                        self.command_queue.put("FL00") # ack_count = 3
 
                     elif self.small_direction == None or self.small_direction == 'None':
                         self.logger.info("Acquiring near_flag log")
                         self.near_flag.acquire()             
-                        
                         self.command_queue.put("OB01") # ack_count = 3
                         
 
+                    # self.command_queue.put("DT30") # ack_count = 3
                     self.logger.info("Start command received, starting robot on Week 9 task!")
                     self.android_queue.put(AndroidMessage('status', 'running'))
 
@@ -289,9 +291,12 @@ class RaspberryPi:
             command: str = self.command_queue.get()
             self.unpause.wait()
             self.movement_lock.acquire()
-            stm32_prefixes = ("STOP", "ZZ", "UL", "UR", "PL", "PR", "RS", "OB")
+            # STM32 Commands - Send straight to STM32
+            stm32_prefixes = ("FS", "BS", "FW", "BW", "FL", "FR", "BL",
+                              "BR", "TL", "TR", "A", "C", "DT", "STOP", "ZZ", "RS")
             if command.startswith(stm32_prefixes):
                 self.stm_link.send(command)
+                self.logger.debug(f"Sending to STM32: {command}")
             elif command == "FIN":
                 self.unpause.clear()
                 self.movement_lock.release()
