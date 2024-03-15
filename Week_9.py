@@ -240,8 +240,10 @@ class RaspberryPi:
                         self.logger.debug("First ACK received, robot reached first obstacle!")
                         self.small_direction = self.snap_and_rec("Small_Near")
                         if self.small_direction == "Left Arrow": 
+                            self.command_queue.put("OB01") # ack_count = 3
                             self.command_queue.put("UL00") # ack_count = 5
                         elif self.small_direction == "Right Arrow":
+                            self.command_queue.put("OB01") # ack_count = 3
                             self.command_queue.put("UR00") # ack_count = 5
                         else:
                             self.command_queue.put("UL00") # ack_count = 5
