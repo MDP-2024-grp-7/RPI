@@ -6,12 +6,14 @@ from multiprocessing import Process, Manager
 from typing import Optional
 import os
 import requests
-from communication.android import AndroidLink, AndroidMessage
-from communication.stm32 import STMLink
+from android import AndroidLink, AndroidMessage
+from stm32 import STMLink
 from consts import SYMBOL_MAP
 from logger import prepare_logger
 from settings import API_IP, API_PORT
+import cv2
 
+retry = False
 
 class PiAction:
     def __init__(self, cat, value):
@@ -72,13 +74,12 @@ class RaspberryPi:
 
             # Establish connection with STM32
             self.stm_link.connect()
-
+            #problemchild
             # Check Image Recognition and Algorithm API status
             self.check_api()
-            
             #self.small_direction = self.snap_and_rec("Small")
             #self.logger.info(f"PREINFER small direction is: {self.small_direction}")
-
+            self.ack_count = 0
             # Define child processes
             self.proc_recv_android = Process(target=self.recv_android)
             self.proc_recv_stm32 = Process(target=self.recv_stm)
@@ -185,28 +186,29 @@ class RaspberryPi:
                         self.logger.error("API is down! Start command aborted.")
 
                     self.clear_queues()
-                    self.command_queue.put("RS00") # ack_count = 1
+                    #self.command_queue.put("RS00") # ack_count = 1
+                    self.command_queue.put("DT27")
                     
                     # Small object direction detection
-                    self.small_direction = self.snap_and_rec("Small")
-                    self.logger.info(f"HERE small direction is: {self.small_direction}")
-                    self.command_queue.put("DT20") 
-                    if self.small_direction == "Left Arrow": 
-                        self.command_queue.put("FL00") # ack_count = 3
-                        self.command_queue.put("FR00") # ack_count = 5
-                        # TODO:fix this shit
-                    elif self.small_direction == "Right Arrow":
-                        self.command_queue.put("FR00") # ack_count = 5
-                        self.command_queue.put("FL00") # ack_count = 3
+                    #self.small_direction = self.snap_and_rec("Small")
+                    #self.logger.info(f"HERE small direction is: {self.small_direction}")
+                    #if self.small_direction == "Right Arrow": #right arrow
+                    #    self.command_queue.put("WN01")
+                    #    print("Inserting WN01 into command queue...") 
+                    #elif self.small_direction == "Left Arrow": #left arrow
+                    #    self.command_queue.put("WN02")
+                    #    print("Inserting WN02 into command queue...") 
 
-                    elif self.small_direction == None or self.small_direction == 'None':
-                        self.logger.info("Acquiring near_flag log")
-                        self.near_flag.acquire()             
-                        self.command_queue.put("OB01") # ack_count = 3
-                        
+                    #elif self.small_direction == None or self.small_direction == 'None':
+                    #    #self.logger.info("Acquiring near_flag log")
+                    #    #self.near_flag.acquire()
+                    #    
+                    #    retry = True
+                    #    self.logger.debug("Failed to detect image one, moving closer")
+                    #    self.command_queue.put("DT20")
+                        #problem child
 
-                    # self.command_queue.put("DT30") # ack_count = 3
-                    self.logger.info("Start command received, starting robot on Week 9 task!")
+                    self.logger.info("Start command received, starting robot on fastest path task!")
                     self.android_queue.put(AndroidMessage('status', 'running'))
 
                     # Commencing path following | Main trigger to start movement #
@@ -219,58 +221,60 @@ class RaspberryPi:
         while True:
 
             message: str = self.stm_link.recv()
+            print("Message received: ", str)
             # Acknowledgement from STM32
-            if message.startswith("ACK"):
-
+            if True:
                 self.ack_count += 1
+
 
                 # Release movement lock
                 try:
                     self.movement_lock.release()
+                    try:
+                        self.retrylock.release()
+                    except:
+                        pass
                 except Exception:
                     self.logger.warning("Tried to release a released lock!")
 
                 self.logger.debug(f"ACK from STM32 received, ACK count now:{self.ack_count}")
-                
-                
                 self.logger.info(f"self.ack_count: {self.ack_count}")
+                if self.ack_count == 1:
+                    self.small_direction = self.snap_and_rec("Small")
+                    self.logger.info(f"HERE small direction is: {self.small_direction}")
+                    if self.small_direction == "Right Arrow": #right arrow
+                        self.command_queue.put("WN01")
+                        print("Inserting WN01 into command queue...")
+                    elif self.small_direction == "Left Arrow": #left arrow
+                        self.command_queue.put("WN02")
+                        print("Inserting WN02 into command queue...")
+                    retry = False
+                if self.ack_count == 2:
+                    self.command_queue.put("DT27")
+                    continue
                 if self.ack_count == 3:
                     try:
-                        self.near_flag.release()
-                        self.logger.debug("First ACK received, robot reached first obstacle!")
+                        #self.near_flag.release()
+                        self.logger.debug("First ACK received, robot past first obstacle!")
                         self.small_direction = self.snap_and_rec("Small_Near")
-                        if self.small_direction == "Left Arrow": 
-                            self.command_queue.put("OB01") # ack_count = 3
-                            self.command_queue.put("UL00") # ack_count = 5
-                        elif self.small_direction == "Right Arrow":
-                            self.command_queue.put("OB01") # ack_count = 3
-                            self.command_queue.put("UR00") # ack_count = 5
+                        self.logger.info(f"HERE small_near direction is: {self.small_direction}")
+                        if self.small_direction == "Right Arrow": #right arrow
+                            self.command_queue.put("WN21") 
+                        elif self.small_direction == "Left Arrow": #left arrow
+                            self.command_queue.put("WN22") 
                         else:
-                            self.command_queue.put("UL00") # ack_count = 5
+                            self.command_queue.put("WN22") 
                             self.logger.debug("Failed first one, going left by default!")
-                    # except:
-                        # self.logger.info("No need to release near_flag")
-                    
-                # if self.ack_count == 3:
                     except:
-                        time.sleep(2)
-                        self.logger.debug("First ACK received, robot finished first obstacle!")
-                        self.large_direction = self.snap_and_rec("Large")
-                        if self.large_direction == "Left Arrow": 
-                            self.command_queue.put("PL01") # ack_count = 6
-                        elif self.large_direction == "Right Arrow":
-                            self.command_queue.put("PR01") # ack_count = 6
-                        else:
-                            self.command_queue.put("PR01") # ack_count = 6
-                            self.logger.debug("Failed second one, going right by default!")
-
-                if self.ack_count == 6:
+                         self.logger.info("No need to release near_flag")
+                if self.ack_count == 4:
                     self.logger.debug("Second ACK received from STM32!")
                     self.android_queue.put(AndroidMessage("status", "finished"))
                     self.command_queue.put("FIN")
+                    self.ack_count = 0
 
-                # except Exception:
-                #     self.logger.warning("Tried to release a released lock!")
+                 #except Exception:
+                  #   self.logger.warning("Tried to release a released lock!")
             else:
                 self.logger.warning(
                     f"Ignored unknown message from STM: {message}")
@@ -291,11 +295,18 @@ class RaspberryPi:
     def command_follower(self) -> None:
         while True:
             command: str = self.command_queue.get()
-            self.unpause.wait()
+            self.logger.debug("Wait for unpause")
+            try:
+                self.logger.debug("wait for retrylock")
+                self.retrylock.acquire()
+                self.retrylock.release()
+            except:
+                self.logger.debug("Wait for unpause")
+                self.unpause.wait()
+            self.logger.debug("wait for movelock")
+            #self.unpause.wait()
             self.movement_lock.acquire()
-            # STM32 Commands - Send straight to STM32
-            stm32_prefixes = ("FS", "BS", "FW", "BW", "FL", "FR", "BL",
-                              "BR", "TL", "TR", "A", "C", "DT", "STOP", "ZZ", "RS")
+            stm32_prefixes = ("STOP", "WN", "RS", "DT")
             if command.startswith(stm32_prefixes):
                 self.stm_link.send(command)
                 self.logger.debug(f"Sending to STM32: {command}")
@@ -332,15 +343,75 @@ class RaspberryPi:
         con_file    = "PiLCConfig9.txt"
         Home_Files  = []
         Home_Files.append(os.getlogin())
+        config_file = "./" + con_file
 
+        extns        = ['jpg','png','bmp','rgb','yuv420','raw']
+        shutters     = [-2000,-1600,-1250,-1000,-800,-640,-500,-400,-320,-288,-250,-240,-200,-160,-144,-125,-120,-100,-96,-80,-60,-50,-48,-40,-30,-25,-20,-15,-13,-10,-8,-6,-5,-4,-3,0.4,0.5,0.6,0.8,1,1.1,1.2,2,3,4,5,6,7,8,9,10,11,15,20,25,30,40,50,60,75,100,112,120,150,200,220,230,239,435]
+        meters       = ['centre','spot','average']
+        awbs         = ['off','auto','incandescent','tungsten','fluorescent','indoor','daylight','cloudy']
+        denoises     = ['off','cdn_off','cdn_fast','cdn_hq']
+
+        #config = []
+        #with open(config_file, "r") as file:
+        #    line = file.readline()
+        #    while line:
+        #        config.append(line.strip())
+        #        line = file.readline()
+        #    config = list(map(int,config))
+        #mode        = config[0]
+        #speed       = config[1]
+        #gain        = config[2]
+        #brightness  = config[3]
+        #contrast    = config[4]
+        #red         = config[6]
+        #blue        = config[7]
+        #ev          = config[8]
+        extn        = 0
+        #saturation  = config[19]
+        #meter       = config[20]
+        #awb         = config[21]
+        #sharpness   = config[22]
+        #denoise     = config[23]
+        #quality     = config[24]
+        
         retry_count = 0
         cap = cv2.VideoCapture(cv2.CAP_V4L2)
+        print("CV2 SNAP")
         while True:
-            retry_count += 1
             ret, frame = cap.read()
-            print(frame)
-            cv2.imwrite(filename, frame)
+            # print(frame)
+            retry_count += 1
+            cv2.imwrite(filename,frame)
+            #shutter = shutters[speed]
+            #if shutter < 0:
+            #    shutter = abs(1/shutter)
+            #sspeed = int(shutter * 1000000)
+            #if (shutter * 1000000) - int(shutter * 1000000) > 0.5:
+            #    sspeed +=1
+                
+            rpistr = "libcamera-still -e " + extns[extn] + " -n -t 100 -o " + filename
+            #rpistr += " --brightness " + str(brightness/100) + " --contrast " + str(contrast/100)
+            #rpistr += " --shutter " + str(sspeed)
+            #if ev != 0:
+            #    rpistr += " --ev " + str(ev)
+            #if sspeed > 1000000 and mode == 0:
+            #    rpistr += " --gain " + str(gain) + " --immediate "
+            #else:    
+            #    rpistr += " --gain " + str(gain)
+            #    if awb == 0:
+            #        rpistr += " --awbgains " + str(red/10) + "," + str(blue/10)
+            #    else:
+            #        rpistr += " --awb " + awbs[awb]
+            #rpistr += " --metering " + meters[meter]
+            #rpistr += " --saturation " + str(saturation/10)
+            #rpistr += " --sharpness " + str(sharpness/10)
+            #rpistr += " --quality " + str(quality)
+            #rpistr += " --denoise "    + denoises[denoise]
+            #rpistr += " --metadata - --metadata-format txt >> PiLibtext.txt"
 
+            #os.system(rpistr)
+            
+            
             self.logger.debug("Requesting from image API")
             
             response = requests.post(url, files={"file": (filename, open(filename,'rb'))})
@@ -355,6 +426,17 @@ class RaspberryPi:
             
             if results['image_id'] != 'NA' or retry_count > 6:
                 break
+            elif retry_count <= 2:
+                self.logger.info(f"Image recognition results: {results}")
+                self.logger.info("Recapturing with same shutter speed...")
+            elif retry_count <= 4:
+                self.logger.info(f"Image recognition results: {results}")
+                self.logger.info("Recapturing with lower shutter speed...")
+                speed -= 1
+            elif retry_count == 5:
+                self.logger.info(f"Image recognition results: {results}")
+                self.logger.info("Recapturing with lower shutter speed...")
+                speed += 3
             
         ans = SYMBOL_MAP.get(results['image_id'])
         self.logger.info(f"Image recognition results: {results} ({ans})")
